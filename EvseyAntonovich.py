@@ -58,7 +58,7 @@ def get_octave_mean(midi: mido.MidiFile) -> int:
     octave = 0
     for cur_note in midi.tracks[1]:  # only track 1 has notes
         if isinstance(cur_note, mido.messages.Message) and cur_note.type == "note_on":
-            octave += cur_note.octave
+            octave += int(cur_note.note / 12)
             count += 1
     return octave // count
 
@@ -99,26 +99,6 @@ def get_notes(track, chord_length):
     if beats % chord_length == 0:
         notes[len(notes) - 1] = final_note
     return notes
-
-
-def generate_random_note(lowest_note_local: int = 0, highest_note_local: int = highest_note):
-    """
-    Returns a random note from lowest_note_local to highest_note_local
-    :param lowest_note_local: Lowest note possible
-    :param highest_note_local: Highest note possible
-    :return: Random note int
-    """
-    return random.randint(lowest_note_local, highest_note_local)
-
-
-def generate_random_chord(lowest_note_local: int = 0, highest_note_local: int = highest_note):
-    """
-    Returns a random chord with base note from lowest_note_local to highest_note_local
-    :param lowest_note_local: Lowest note possible
-    :param highest_note_local: Highest note possible
-    :return:
-    """
-    return Chord(generate_random_note(lowest_note_local, highest_note_local), random.choice(chord_list))
 
 
 class Chord:
@@ -246,6 +226,149 @@ class Chromosome:
         return self.rating < other.rating
 
 
+def generate_random_note(lowest_note_local: int = 0, highest_note_local: int = highest_note):
+    """
+    Returns a random note from lowest_note_local to highest_note_local
+    :param lowest_note_local: Lowest note possible
+    :param highest_note_local: Highest note possible
+    :return: Random note int
+    """
+    return random.randint(lowest_note_local, highest_note_local)
+
+
+def generate_random_chord(lowest_note_local: int = 0, highest_note_local: int = highest_note):
+    """
+    Returns a random chord with base note from lowest_note_local to highest_note_local
+    :param lowest_note_local: Lowest note possible
+    :param highest_note_local: Highest note possible
+    :return:
+    """
+    return Chord(generate_random_note(lowest_note_local, highest_note_local), random.choice(chord_list))
+
+
+def generate_population(population_size, chromo_size):
+    """
+    Generate a population of size population_size with chromosome of chromo_size
+    :param population_size:
+    :param chromo_size:
+    :return: Population
+    """
+    return [Chromosome(chromo_size) for i in range(population_size)]
+
+
+def calculate_new_chromosome_ratings(chromosome, accompaniment: Accompaniment, notes):
+    """
+    Calculates the new rating for a chromosome
+    :param chromosome: The chromosome itself
+    :param accompaniment: Accompaniment with consonant chords
+    :param notes: The song notes
+    :return: New rating for the chromosome
+    """
+    new_rating = chromosome.chromosome_size
+    for i, gene in enumerate(chromosome.gene_pool):
+        if accompaniment.consonant_chords_contain_chord(gene):
+            new_rating -= 0.5
+            if notes[i] is None:
+                new_rating -= 0.5
+                continue
+            if not accompaniment.consonant_chord_notes_contain_note(notes[i]) or notes[i] in gene:
+                new_rating -= 0.5
+    return new_rating
+
+
+def adjust_ratings(population, accompaniment: Accompaniment, notes):
+    """
+    Adjusts the ratings of each chromosome in the population - the fitness function of the genetic algorithm
+    :param notes: Song notes
+    :param accompaniment: Accompaniment with consonant chords
+    :param population: The population with the chromosomes
+    """
+    chromosome: Chromosome
+    for chromosome in population:
+        chromosome.rating = calculate_new_chromosome_ratings(chromosome, accompaniment, notes)
+
+
+def select_top(population, survivor_list):
+    """
+    Selects the top chromosomes from the population
+    :param population: The population
+    :param survivor_list: The list of the survivors
+    :return: New list of survivors
+    """
+    survivors_size = len(survivor_list)
+    survivors = [population[i] for i in range(survivors_size)]
+    return survivors
+
+
+def get_random_chromosome_index(chromosomes, first_parent_index=None):
+    """
+    Gets a random chromosome index
+    :param chromosomes: The list of chromosomes, used to know the size
+    :param first_parent_index: The first parent, so that we don't take an already used index
+    :return: Random index
+    """
+    chromosome_number = len(chromosomes)
+    while True:
+        rand_index = random.randrange(0, chromosome_number)
+        if first_parent_index is None or first_parent_index != rand_index:
+            return rand_index
+
+
+def cross_chromosomes(first_chromosome: Chromosome, second_chromosome: Chromosome):
+    """
+    Slice the parent chromosomes at a random point and cross them over
+    :param first_chromosome: First chromosome
+    :param second_chromosome: Second chromosome
+    :return: New chromosome
+    """
+    chromo_size = first_chromosome.chromosome_size
+    slicing_point = random.randrange(0, chromo_size)
+    child_chromosome = Chromosome(chromo_size)
+    # Slice using list slices
+    child_chromosome.gene_pool[:slicing_point] = first_chromosome.gene_pool[:slicing_point]
+    child_chromosome.gene_pool[slicing_point:chromo_size] = second_chromosome.gene_pool[slicing_point:chromo_size]
+    return child_chromosome
+
+
+def repopulate(population, survivors, child_count):
+    """
+    Repopulate by crossing the survivors
+    :param population: Population to fill
+    :param survivors: The parents
+    :param child_count: Current child count
+    :return: New population
+    """
+    pop_size = len(population)
+    while child_count < pop_size:
+        first_parent_index = get_random_chromosome_index(survivors)
+        second_parent_index = get_random_chromosome_index(survivors, first_parent_index)
+        first_parent = survivors[first_parent_index]
+        second_parent = survivors[second_parent_index]
+        population[child_count] = cross_chromosomes(first_parent, second_parent)
+        population[child_count + 1] = cross_chromosomes(second_parent, first_parent)
+        child_count += 2
+    return population
+
+
+def mutate_chromosomes(population, chromosome_mutation_number, gene_mutation_number):
+    """
+    Mutates some genes in some chromosomes
+    :param population: The population
+    :param chromosome_mutation_number: How many chromosomes to mutate
+    :param gene_mutation_number: How many genes in each chromosome to mutate
+    :return: New population
+    """
+    population_size = len(population)
+    for i in range(chromosome_mutation_number):
+        chromosome_index = get_random_chromosome_index(population)
+        chromosome = population[chromosome_index]
+        for j in range(gene_mutation_number):
+            new_chord = generate_random_chord()
+            gene_index = random.randrange(0, chromosome.chromosome_size)
+            chromosome.gene_pool[gene_index] = new_chord
+    return population
+
+
 def main():
     input_file = "input1.mid"
     output_file = "output1.mid"
@@ -253,6 +376,7 @@ def main():
     midi_file.type = 1
     midi_score = music21.converter.parse(input_file)
     key = midi_score.analyze("key")  # use music21 to get the key
+    print("Key is:", key)
     scale = (key.tonic.midi + (key.mode == "minor") * 3) % 12  # For consonant chord calculation
     chord_length = midi_file.ticks_per_beat * 2  # Two beats
     tempo = get_midi_tempo(midi_file)
@@ -263,6 +387,38 @@ def main():
     accompaniment_genome = Accompaniment(scale, notes_length)
 
     track = [mido.MetaMessage("set_tempo", tempo=tempo, time=0)]  # The track that will contain our chords
+
+    # Genetic algorithm:
+    pop_size = 128  # Population size
+    survivors = [None for i in range(pop_size // 4)]  # Best chromosomes
+    population = generate_population(pop_size, accompaniment_genome.song_size)
+    iteration_i = 0
+    iteration_max = 5000
+    # Select best of population, repopulate and mutate
+    while True:
+        adjust_ratings(population, accompaniment_genome, notes)
+        population.sort()
+        if population[0].rating == 0 or iteration_i >= iteration_max:
+            break  # We either reached the perfect accompaniment or we have iterated for long enough
+        survivors = select_top(population, survivors)
+        population = repopulate(population, survivors, len(population) // 2)
+        population = mutate_chromosomes(population, len(population) // 2, 1)
+
+    # Writing
+    chord: Chord
+    for chord in population[0].gene_pool:
+        for i in range(3):
+            track.append(
+                mido.messages.Message('note_on', channel=0, note=chord.notes[i] + accompaniment_displacement,
+                                      velocity=accompaniment_velocity,
+                                      time=0))
+        for i in range(3):
+            track.append(
+                mido.messages.Message('note_off', channel=0, note=chord.notes[i] + accompaniment_displacement,
+                                      velocity=accompaniment_velocity,
+                                      time=(chord_length if i == 0 else 0)))
+    midi_file.tracks.append(track)
+    midi_file.save(output_file)
 
 
 if __name__ == "__main__":
